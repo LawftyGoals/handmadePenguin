@@ -1,0 +1,6 @@
+test/*
+build/*
+*kdev4*
+.kdev4
+code.kdev4
+
