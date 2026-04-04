@@ -1,62 +1,125 @@
+#include <SDL3/SDL_render.h>
+#include <SDL3/SDL_gamepad.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <stdlib.h>
 #include <SDL3/SDL.h>
+
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 
 #define internal static
 #define local_persist static
 #define global_variable static
 
-//TODO: THIS IS A GLOBAL... for now...
-global_variable bool RUNNING = true;
-
-global_variable SDL_Texture *Texture;
-global_variable void *BitmapMemory;
-global_variable int BitmapWidth;
-global_variable int BytesPerPixel = 4;
+#define MAX_GAMEPADS 4
 
 
-internal void SDLResizeTexture(SDL_Renderer *Renderer, int Width, int Height) {
+// pixels are always 32-bit and have the bytes of BGRX order
+typedef struct {
+	SDL_Texture *Texture;
+	void *Memory;
+	int Width;
+	int Height;
+	int Pitch;
+} sdl_offscreen_buffer;
 
-	if (BitmapMemory) free(BitmapMemory);
-	if (Texture) SDL_DestroyTexture(Texture);
+typedef struct {
+	int Width;
+	int Height;
+} sdl_window_dimension;
 
-	Texture = SDL_CreateTexture(
+global_variable sdl_offscreen_buffer GlobalBackbuffer;
+
+sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window){
+	sdl_window_dimension Result;
+
+	SDL_GetWindowSize(Window, &Result.Width, &Result.Height);
+
+	return Result;
+}
+
+internal void RenderWeirdGradient(sdl_offscreen_buffer Buffer, int BlueOffset, int GreenOffset){
+	uint8_t *Row = (uint8_t *)Buffer.Memory;
+	for(int Y = 0;
+		Y < Buffer.Height;
+	++Y)
+		{
+			uint32_t *Pixel = (uint32_t *)Row;
+			for(int X = 0;
+				X < Buffer.Width;
+			++X)
+				{
+					uint8_t Blue = (X + BlueOffset);
+					uint8_t Green = (Y + GreenOffset);
+
+					*Pixel++ =  ((Green << 8) | Blue);
+				}
+
+				Row += Buffer.Pitch;
+		}
+}
+
+
+internal void SDLResizeTexture(sdl_offscreen_buffer *Buffer,SDL_Renderer *Renderer, int Width, int Height) {
+	int BytesPerPixel = 4;
+	if (Buffer->Memory) munmap(Buffer->Memory, Buffer->Height * Buffer->Width * BytesPerPixel);
+	if (Buffer->Texture) SDL_DestroyTexture(Buffer->Texture);
+
+	Buffer->Texture = SDL_CreateTexture(
 			Renderer, 
-			SDL_PIXELFORMAT_ARGB8888,
+			SDL_PIXELFORMAT_XRGB8888,
 			SDL_TEXTUREACCESS_STREAMING,
 			Width,
 			Height);
 	
-	BitmapWidth = Width;
+	Buffer->Width = Width;
+	Buffer->Height = Height;
+	Buffer->Pitch = Width * BytesPerPixel;
 
-	BitmapMemory = malloc(Width * Height * BytesPerPixel);
+	Buffer->Memory = mmap(0,
+					Height * Width * BytesPerPixel,
+					PROT_READ|PROT_WRITE,
+					MAP_ANONYMOUS|MAP_PRIVATE,
+					-1,
+					0);
+
 
 }
 
-internal void SDLUpdateWindow(SDL_Window *Window, SDL_Renderer *Renderer){
-		SDL_UpdateTexture(Texture, 0, BitmapMemory, BitmapWidth * BytesPerPixel);
+internal void SDLUpdateWindow(SDL_Window *Window, SDL_Renderer *Renderer, sdl_offscreen_buffer Buffer){
+	SDL_UpdateTexture(Buffer.Texture,
+					0,
+					Buffer.Memory,
+					Buffer.Pitch);
 
-		SDL_RenderTexture(Renderer, Texture, 0, 0);
+	SDL_RenderTexture(Renderer,
+					  Buffer.Texture,
+					  0,
+					  0);
 
-		SDL_RenderPresent(Renderer);
+	SDL_RenderPresent(Renderer);
 }
 
 
-void HandleEvent(SDL_Event *Event){
+bool HandleEvent(SDL_Event *Event){
+
+	bool shouldContinue = true;
 
 	switch (Event->type){
 		case SDL_EVENT_QUIT:
 		{
 			//TODO: Handle this with a message to user?
 			printf("SDL_QUIT\n");
-			RUNNING = false;
+			shouldContinue = false;
 		} break;
 		case SDL_EVENT_WINDOW_RESIZED:
 		{
 			SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
 			SDL_Renderer *Renderer = SDL_GetRenderer(Window);
 			printf("SDL_EVENT_WINDOW_RESIZED (%d, %d)\n", Event->window.data1, Event->window.data2);
-			SDLResizeTexture(Renderer, Event->window.data1, Event->window.data2 );
+			SDLResizeTexture(&GlobalBackbuffer, Renderer, Event->window.data1, Event->window.data2 );
 		} break;
 		case SDL_EVENT_WINDOW_EXPOSED:
 		{
@@ -64,29 +127,60 @@ void HandleEvent(SDL_Event *Event){
 			SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
 			SDL_Renderer *Renderer = SDL_GetRenderer(Window);	
 
-			SDLUpdateWindow(Window, Renderer);
+			SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 
-		}
+		} break;
 	}
 
+	return shouldContinue;
+
 }
+
+SDL_Gamepad *GamepadHandles[MAX_GAMEPADS];
+
+internal void SDLOpenGamepads(){
+	int maxpads = MAX_GAMEPADS;
+	SDL_JoystickID *GamepadIds = SDL_GetGamepads(&maxpads);
+
+	for(int idx = 0; idx < MAX_GAMEPADS; idx++) GamepadHandles[idx] = nullptr;
+
+
+	int count = 0;
+	while(GamepadIds[count] != '\0') count++;
+
+	for(int GamepadIndex = 0; GamepadIndex < count; ++GamepadIndex){
+			if(SDL_IsGamepad(GamepadIds[GamepadIndex])){
+				GamepadHandles[GamepadIndex] = SDL_OpenGamepad(GamepadIds[GamepadIndex]);
+			}
+	}
+}
+
+
+internal void SDLCloseGamepads(){
+		for(int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; ++GamepadIndex){
+				if(GamepadHandles[GamepadIndex]){
+						SDL_CloseGamepad(GamepadHandles[GamepadIndex]);
+				}
+		}
+}
+
+
 
 
 
 int main(int argc, char* argv[]){
 
 	//SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Handmade Hero", "This is handmade hero", 0);
-	
-	
-	SDL_Window *Window;
-	
+	SDL_Window *Window;	
 	SDL_Renderer *Renderer;
 
 		
-	if(!SDL_Init(SDL_INIT_VIDEO)){
+	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)){
 		printf("failed to init sdl");
 		return 1;
 	}
+
+	if(SDL_HasGamepad()) SDLOpenGamepads();
 
 	if(!SDL_CreateWindowAndRenderer("Handmade Hero", 640, 480, SDL_WINDOW_RESIZABLE, &Window, &Renderer)){ 
 
@@ -94,19 +188,42 @@ int main(int argc, char* argv[]){
 		return 1;
 	}
 
+	bool RUNNING = true;
+
+	int XOffset = 0;
+	int YOffset = 0;
+
+	SDLGetWindowDimension(Window);
+	sdl_window_dimension Dimension = SDLGetWindowDimension(Window);
+	SDLResizeTexture(&GlobalBackbuffer, Renderer, Dimension.Width, Dimension.Height);
 
 	while (RUNNING){
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
-			HandleEvent(&event);
+			RUNNING = HandleEvent(&event);
 		}
+		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 
-	}
+		//++XOffset;
+		//YOffset += 2;
+
+		if(SDL_HasGamepad()){
+				
+				for (int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; GamepadIndex++){
+						Gamepad *gamepad = GamepadHandles[GamepadIndex];
+						if(gamepad != 0 && SDL_GamepadConnected(gamepad)){
+
+							
+						}
+				}
+
+		}
 
 
 	SDL_DestroyWindow(Window);
 
-
+	SDLCloseGamepads();
 	SDL_Quit();
 
 	return(0);
