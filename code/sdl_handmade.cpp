@@ -1,3 +1,4 @@
+#include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_render.h>
 #include <SDL3/SDL_gamepad.h>
 #include <stdio.h>
@@ -42,23 +43,26 @@ sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window){
 
 internal void RenderWeirdGradient(sdl_offscreen_buffer Buffer, int BlueOffset, int GreenOffset){
 	uint8_t *Row = (uint8_t *)Buffer.Memory;
+
+	uint8_t Alpha = 255;
+
 	for(int Y = 0;
-		Y < Buffer.Height;
-	++Y)
-		{
-			uint32_t *Pixel = (uint32_t *)Row;
-			for(int X = 0;
+			Y < Buffer.Height;
+			++Y)
+	{
+		uint32_t *Pixel = (uint32_t *)Row;
+		for(int X = 0;
 				X < Buffer.Width;
-			++X)
-				{
-					uint8_t Blue = (X + BlueOffset);
-					uint8_t Green = (Y + GreenOffset);
-
-					*Pixel++ =  ((Green << 8) | Blue);
-				}
-
-				Row += Buffer.Pitch;
+				++X)
+		{
+			uint8_t Blue = (X + BlueOffset);
+			uint8_t Green = (Y + GreenOffset);
+			uint8_t Red = 255 -((((Blue + Green)*100)/((Green + 255)))*255)/100;
+			*Pixel++ =  ((Alpha << 24) | (Red << 16) | (Green << 8) | Blue);
 		}
+
+		Row += Buffer.Pitch;
+	}
 }
 
 
@@ -69,35 +73,35 @@ internal void SDLResizeTexture(sdl_offscreen_buffer *Buffer,SDL_Renderer *Render
 
 	Buffer->Texture = SDL_CreateTexture(
 			Renderer, 
-			SDL_PIXELFORMAT_XRGB8888,
+			SDL_PIXELFORMAT_ARGB8888,
 			SDL_TEXTUREACCESS_STREAMING,
 			Width,
 			Height);
-	
+
 	Buffer->Width = Width;
 	Buffer->Height = Height;
 	Buffer->Pitch = Width * BytesPerPixel;
 
 	Buffer->Memory = mmap(0,
-					Height * Width * BytesPerPixel,
-					PROT_READ|PROT_WRITE,
-					MAP_ANONYMOUS|MAP_PRIVATE,
-					-1,
-					0);
+			Height * Width * BytesPerPixel,
+			PROT_READ|PROT_WRITE,
+			MAP_ANONYMOUS|MAP_PRIVATE,
+			-1,
+			0);
 
 
 }
 
 internal void SDLUpdateWindow(SDL_Window *Window, SDL_Renderer *Renderer, sdl_offscreen_buffer Buffer){
 	SDL_UpdateTexture(Buffer.Texture,
-					0,
-					Buffer.Memory,
-					Buffer.Pitch);
+			0,
+			Buffer.Memory,
+			Buffer.Pitch);
 
 	SDL_RenderTexture(Renderer,
-					  Buffer.Texture,
-					  0,
-					  0);
+			Buffer.Texture,
+			0,
+			0);
 
 	SDL_RenderPresent(Renderer);
 }
@@ -109,27 +113,56 @@ bool HandleEvent(SDL_Event *Event){
 
 	switch (Event->type){
 		case SDL_EVENT_QUIT:
-		{
-			//TODO: Handle this with a message to user?
-			printf("SDL_QUIT\n");
-			shouldContinue = false;
-		} break;
+			{
+				//TODO: Handle this with a message to user?
+				printf("SDL_QUIT\n");
+				shouldContinue = false;
+			} break;
 		case SDL_EVENT_WINDOW_RESIZED:
-		{
-			SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
-			SDL_Renderer *Renderer = SDL_GetRenderer(Window);
-			printf("SDL_EVENT_WINDOW_RESIZED (%d, %d)\n", Event->window.data1, Event->window.data2);
-			SDLResizeTexture(&GlobalBackbuffer, Renderer, Event->window.data1, Event->window.data2 );
-		} break;
+			{
+				SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
+				SDL_Renderer *Renderer = SDL_GetRenderer(Window);
+				printf("SDL_EVENT_WINDOW_RESIZED (%d, %d)\n", Event->window.data1, Event->window.data2);
+				SDLResizeTexture(&GlobalBackbuffer, Renderer, Event->window.data1, Event->window.data2 );
+			} break;
 		case SDL_EVENT_WINDOW_EXPOSED:
-		{
-	
-			SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
-			SDL_Renderer *Renderer = SDL_GetRenderer(Window);	
+			{
 
-			SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
+				SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
+				SDL_Renderer *Renderer = SDL_GetRenderer(Window);	
 
-		} break;
+				SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
+
+			} break;
+			//Key events
+		case SDL_EVENT_KEY_DOWN:
+		case SDL_EVENT_KEY_UP:
+			{
+				SDL_Keycode key = Event->key.key;
+				bool isDown = (Event->key.down);
+				bool wasDown = false;
+				if(!(Event->key.down)){
+					wasDown = true;
+				}
+				if(Event->key.repeat){
+					wasDown = true;
+				}
+				if(!(Event->key.repeat)){
+
+					switch(key){
+						case SDLK_W:
+							{
+								printf("W: ");
+								if(isDown){
+									printf("is down\n");
+								}
+								if(wasDown){
+									printf("was down\n");
+								}
+							} break;
+					}
+				}
+			} break;
 	}
 
 	return shouldContinue;
@@ -149,44 +182,65 @@ internal void SDLOpenGamepads(){
 	while(GamepadIds[count] != '\0') count++;
 
 	for(int GamepadIndex = 0; GamepadIndex < count; ++GamepadIndex){
-			if(SDL_IsGamepad(GamepadIds[GamepadIndex])){
-				GamepadHandles[GamepadIndex] = SDL_OpenGamepad(GamepadIds[GamepadIndex]);
-			}
+		if(SDL_IsGamepad(GamepadIds[GamepadIndex])){
+			GamepadHandles[GamepadIndex] = SDL_OpenGamepad(GamepadIds[GamepadIndex]);
+		}
 	}
 }
 
 
 internal void SDLCloseGamepads(){
-		for(int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; ++GamepadIndex){
-				if(GamepadHandles[GamepadIndex]){
-						SDL_CloseGamepad(GamepadHandles[GamepadIndex]);
-				}
+	for(int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; ++GamepadIndex){
+		if(GamepadHandles[GamepadIndex]){
+			SDL_CloseGamepad(GamepadHandles[GamepadIndex]);
 		}
+	}
 }
 
+
+internal void SDLAudioCallback(void *UserData,SDL_AudioStream *Stream, int additional_amount, int total_amount){
+	memset(Stream, 0, additional_amount);
+}
+
+
+
+internal void SDLInitAudio(uint8_t channels, int32_t SamplesFrequency) {
+
+	
+	SDL_AudioSpec spec = { SDL_AUDIO_S16, channels, SamplesFrequency};
+	SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SDLAudioCallback, NULL);
+
+	if(!stream){
+		printf("Failed to create audio stream: %s", SDL_GetError());
+	}
+
+	SDL_PauseAudioStreamDevice(stream);
+
+}
 
 
 
 
 int main(int argc, char* argv[]){
 
-	//SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Handmade Hero", "This is handmade hero", 0);
+	//SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Handmade Penguin", "This is handmade hero", 0);
 	SDL_Window *Window;	
 	SDL_Renderer *Renderer;
 
-		
-	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)){
-		printf("failed to init sdl");
+
+	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)){
 		return 1;
 	}
 
 	if(SDL_HasGamepad()) SDLOpenGamepads();
 
-	if(!SDL_CreateWindowAndRenderer("Handmade Hero", 640, 480, SDL_WINDOW_RESIZABLE, &Window, &Renderer)){ 
+	if(!SDL_CreateWindowAndRenderer("Handmade Penguin", 640, 480, SDL_WINDOW_RESIZABLE, &Window, &Renderer)){ 
 
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not create window: %s\n", SDL_GetError());
 		return 1;
 	}
+
+	SDLInitAudio(2, 44100);
 
 	bool RUNNING = true;
 
@@ -197,28 +251,56 @@ int main(int argc, char* argv[]){
 	sdl_window_dimension Dimension = SDLGetWindowDimension(Window);
 	SDLResizeTexture(&GlobalBackbuffer, Renderer, Dimension.Width, Dimension.Height);
 
+
+
 	while (RUNNING){
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			RUNNING = HandleEvent(&event);
 		}
-		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
-		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 
 		//++XOffset;
 		//YOffset += 2;
 
 		if(SDL_HasGamepad()){
-				
-				for (int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; GamepadIndex++){
-						Gamepad *gamepad = GamepadHandles[GamepadIndex];
-						if(gamepad != 0 && SDL_GamepadConnected(gamepad)){
 
-							
-						}
+			for (int GamepadIndex = 0; GamepadIndex < MAX_GAMEPADS; GamepadIndex++){
+				SDL_Gamepad *gamepad = GamepadHandles[GamepadIndex];
+				if(gamepad != 0 && SDL_GamepadConnected(gamepad)){
+					// NOTE: We have a gamepad with index GamepadIndex.
+					//bool Up = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP);
+					//bool Down = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+					//bool Left = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+					//bool Right = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+					//bool Start = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START);
+					//bool Back = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_BACK);
+					//bool LeftShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+					//bool RightShoulder = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+					bool AButton = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH);
+					bool BButton = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST);
+					//bool XButton = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_WEST);
+					//bool YButton = SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_NORTH);	
+					//int16_t StickX = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+					//int16_t StickY = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);	
+
+					if(AButton){
+						YOffset+=2;
+					}
+					if(BButton){
+						++XOffset;
+					}
 				}
+				else {
+					//TODO: SOMETHING SOMETHING DARKSIDE
+				}
+			}
 
 		}
+
+
+		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
+	}
 
 
 	SDL_DestroyWindow(Window);
@@ -232,15 +314,15 @@ int main(int argc, char* argv[]){
 
 /*
  *
- 
-			const double now = ((double)SDL_GetTicks()) / 1000.0;
 
-			const float red = (float) (0.5 + 0.5 * SDL_sin(now));
-			const float green = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 2 / 3));
-			const float blue = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 4 /  3));
-			SDL_SetRenderDrawColorFloat(Renderer, red, green, blue, SDL_ALPHA_OPAQUE_FLOAT);
+ const double now = ((double)SDL_GetTicks()) / 1000.0;
 
-			SDL_RenderClear(Renderer);
+ const float red = (float) (0.5 + 0.5 * SDL_sin(now));
+ const float green = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 2 / 3));
+ const float blue = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 4 /  3));
+ SDL_SetRenderDrawColorFloat(Renderer, red, green, blue, SDL_ALPHA_OPAQUE_FLOAT);
 
-			SDL_RenderPresent(Renderer);
-*/
+ SDL_RenderClear(Renderer);
+
+ SDL_RenderPresent(Renderer);
+ */
