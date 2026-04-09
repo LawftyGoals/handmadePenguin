@@ -197,25 +197,27 @@ internal void SDLCloseGamepads(){
 	}
 }
 
-
+/*
 internal void SDLAudioCallback(void *UserData,SDL_AudioStream *Stream, int additional_amount, int total_amount){
 	memset(Stream, 0, additional_amount);
 }
+*/
 
 
+internal SDL_AudioStream *SDLInitAudio(uint8_t channels, int32_t SamplesFrequency) {
 
-internal void SDLInitAudio(uint8_t channels, int32_t SamplesFrequency) {
-
-	
 	SDL_AudioSpec spec = { SDL_AUDIO_S16, channels, SamplesFrequency};
-	SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SDLAudioCallback, NULL);
+	// THE AUDIOCALLBACK FUNCTION DOES NOT SEEM TO BE NECESSARY ON SDL3
+	// use putaudiostreams and getaudiostreams.
+	//SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SDLAudioCallback, NULL);
 
+	SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
 	if(!stream){
-		printf("Failed to create audio stream: %s", SDL_GetError());
+		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Failed to create audio stream: %s", SDL_GetError());
+		return NULL;
 	}
 
-	SDL_PauseAudioStreamDevice(stream);
-
+	return stream;
 }
 
 
@@ -226,7 +228,7 @@ int main(int argc, char* argv[]){
 	//SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Handmade Penguin", "This is handmade hero", 0);
 	SDL_Window *Window;	
 	SDL_Renderer *Renderer;
-
+	SDL_AudioStream *AudioStream = NULL;
 
 	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)){
 		return 1;
@@ -240,7 +242,21 @@ int main(int argc, char* argv[]){
 		return 1;
 	}
 
-	SDLInitAudio(2, 44100);
+	int SamplesPerSecond = 48000;	
+	int ToneHz = 256;
+	int16_t ToneVolume = 3000;
+	uint32_t RunningSampleIndex = 0;
+	int SquareWavePeriod = SamplesPerSecond / ToneHz;
+	int HalfSquareWavePeriod = SquareWavePeriod / 2;
+	int BytesPerSample = sizeof(int16_t) * 2;
+	int BytesToWrite = 800 * BytesPerSample;
+	
+	if((AudioStream = SDLInitAudio(2, SamplesPerSecond)) == NULL){
+		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not initialize audio.\n");
+		return 1;
+	}
+
+	SDL_ResumeAudioStreamDevice(AudioStream);
 
 	bool RUNNING = true;
 
@@ -252,14 +268,13 @@ int main(int argc, char* argv[]){
 	SDLResizeTexture(&GlobalBackbuffer, Renderer, Dimension.Width, Dimension.Height);
 
 
-
 	while (RUNNING){
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			RUNNING = HandleEvent(&event);
 		}
 
-		//++XOffset;
+		//++XOffset; 
 		//YOffset += 2;
 
 		if(SDL_HasGamepad()){
@@ -299,6 +314,19 @@ int main(int argc, char* argv[]){
 
 
 		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+
+		void *SoundBuffer = malloc(BytesToWrite);
+		int16_t *SampleOut = (int16_t *)SoundBuffer;
+		int SampleCount = BytesToWrite/BytesPerSample;
+
+		for(int SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex){
+			int16_t SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2) ? ToneVolume : -ToneVolume;
+			*SampleOut++ = SampleValue;
+			*SampleOut++ = SampleValue;
+		}
+		SDL_PutAudioStreamData(AudioStream, SoundBuffer,  BytesToWrite);
+
+
 		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 	}
 
