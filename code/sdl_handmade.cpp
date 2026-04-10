@@ -17,6 +17,14 @@
 #define MAX_GAMEPADS 4
 
 
+
+typedef struct {
+	int Size;
+	int WriteCursor;
+	int PlayCursor;
+	void *Data;
+} sdl_audio_ring_buffer;
+
 // pixels are always 32-bit and have the bytes of BGRX order
 typedef struct {
 	SDL_Texture *Texture;
@@ -31,6 +39,11 @@ typedef struct {
 	int Height;
 } sdl_window_dimension;
 
+
+ // AUDIO
+
+
+//SCREEN BUFFER
 global_variable sdl_offscreen_buffer GlobalBackbuffer;
 
 sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window){
@@ -203,6 +216,35 @@ internal void SDLAudioCallback(void *UserData,SDL_AudioStream *Stream, int addit
 }
 */
 
+internal void SDLCALL SDLCustomAudioCallback(void *userdata, SDL_AudioStream *astream, int additional_amount, int total_amount) {
+
+	local_persist int32_t RunningSampleIndex = 0;
+	
+	int16_t ToneVolume = 10000;
+	int ToneHz = 256;
+	int SamplesPerSecond = 48000;
+
+	int BytesPerSample = sizeof(int16_t) * 2;
+
+	int SquareWavePeriod = SamplesPerSecond / ToneHz;
+	int HalfSquareWavePeriod = SquareWavePeriod / 2;
+
+	void *SoundBuffer = malloc(additional_amount);
+	int16_t *SampleOut = (int16_t *)SoundBuffer;
+	int SampleCount = additional_amount / BytesPerSample;
+
+	for (int SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex){
+		int16_t SampleValue = ((RunningSampleIndex++ / HalfSquareWavePeriod) % 2) ? ToneVolume : -ToneVolume;
+		*SampleOut++ = SampleValue;
+		*SampleOut++ = SampleValue;
+	}
+
+	SDL_PutAudioStreamData(astream, SoundBuffer, additional_amount);
+
+	free(SoundBuffer);
+	
+}
+
 
 internal SDL_AudioStream *SDLInitAudio(uint8_t channels, int32_t SamplesFrequency) {
 
@@ -211,7 +253,7 @@ internal SDL_AudioStream *SDLInitAudio(uint8_t channels, int32_t SamplesFrequenc
 	// use putaudiostreams and getaudiostreams.
 	//SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SDLAudioCallback, NULL);
 
-	SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+	SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SDLCustomAudioCallback, NULL);
 	if(!stream){
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Failed to create audio stream: %s", SDL_GetError());
 		return NULL;
@@ -225,7 +267,6 @@ internal SDL_AudioStream *SDLInitAudio(uint8_t channels, int32_t SamplesFrequenc
 
 int main(int argc, char* argv[]){
 
-	//SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Handmade Penguin", "This is handmade hero", 0);
 	SDL_Window *Window;	
 	SDL_Renderer *Renderer;
 	SDL_AudioStream *AudioStream = NULL;
@@ -243,14 +284,14 @@ int main(int argc, char* argv[]){
 	}
 
 	int SamplesPerSecond = 48000;	
-	int ToneHz = 256;
-	int16_t ToneVolume = 3000;
+	/*int ToneHz = 256;
+	int16_t ToneVolume = 6000;
 	uint32_t RunningSampleIndex = 0;
 	int SquareWavePeriod = SamplesPerSecond / ToneHz;
 	int HalfSquareWavePeriod = SquareWavePeriod / 2;
 	int BytesPerSample = sizeof(int16_t) * 2;
 	int BytesToWrite = 800 * BytesPerSample;
-	
+	*/
 	if((AudioStream = SDLInitAudio(2, SamplesPerSecond)) == NULL){
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not initialize audio.\n");
 		return 1;
@@ -314,7 +355,7 @@ int main(int argc, char* argv[]){
 
 
 		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
-
+/*
 		void *SoundBuffer = malloc(BytesToWrite);
 		int16_t *SampleOut = (int16_t *)SoundBuffer;
 		int SampleCount = BytesToWrite/BytesPerSample;
@@ -325,14 +366,13 @@ int main(int argc, char* argv[]){
 			*SampleOut++ = SampleValue;
 		}
 		SDL_PutAudioStreamData(AudioStream, SoundBuffer,  BytesToWrite);
-
+		free(SoundBuffer);
+*/
 
 		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 	}
 
-
 	SDL_DestroyWindow(Window);
-
 	SDLCloseGamepads();
 	SDL_Quit();
 
@@ -340,17 +380,3 @@ int main(int argc, char* argv[]){
 }
 
 
-/*
- *
-
- const double now = ((double)SDL_GetTicks()) / 1000.0;
-
- const float red = (float) (0.5 + 0.5 * SDL_sin(now));
- const float green = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 2 / 3));
- const float blue = (float) (0.5 + 0.5 * SDL_sin(now + SDL_PI_D * 4 /  3));
- SDL_SetRenderDrawColorFloat(Renderer, red, green, blue, SDL_ALPHA_OPAQUE_FLOAT);
-
- SDL_RenderClear(Renderer);
-
- SDL_RenderPresent(Renderer);
- */
