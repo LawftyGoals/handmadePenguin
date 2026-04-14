@@ -1,3 +1,4 @@
+#include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_render.h>
@@ -266,6 +267,7 @@ int main(int argc, char* argv[]){
 	SDL_Window *Window;	
 	SDL_Renderer *Renderer;
 	SDL_AudioStream *AudioStream = NULL;
+	uint64_t PerformanceCounterFrequency = SDL_GetPerformanceFrequency();
 
 	if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)){
 		return 1;
@@ -305,7 +307,11 @@ int main(int argc, char* argv[]){
 	SDLResizeTexture(&GlobalBackbuffer, Renderer, Dimension.Width, Dimension.Height);
 
 
+	uint64_t PreviousCounter = SDL_GetPerformanceCounter();
+	
 	while (RUNNING){
+
+
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			RUNNING = HandleEvent(&event, &SoundOutput);
@@ -357,6 +363,19 @@ int main(int argc, char* argv[]){
 
 
 		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
+
+		uint64_t EndCounter = SDL_GetPerformanceCounter();
+
+		uint64_t CounterElapsed = EndCounter - PreviousCounter;
+
+		double MSPerFrame = (((1000.0f * (double)CounterElapsed) / (double)PerformanceCounterFrequency));
+		double FPS = (double)PerformanceCounterFrequency / (double)CounterElapsed;
+		printf("%.02f ms/f, %.02ff\n", MSPerFrame, FPS);
+
+		//TODO display value;
+
+		PreviousCounter = EndCounter;
+
 	}
 
 	SDL_DestroyWindow(Window);
