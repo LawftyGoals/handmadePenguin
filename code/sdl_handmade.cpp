@@ -1,3 +1,4 @@
+#include <x86intrin.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_audio.h>
@@ -7,7 +8,7 @@
 #include <sys/mman.h>
 #include <stdlib.h>
 #include <SDL3/SDL.h>
-
+#include <time.h>
 #ifndef MAP_ANONYMOUS
 #define MAP_ANONYMOUS MAP_ANON
 #endif
@@ -16,9 +17,18 @@
 #define local_persist static
 #define global_variable static
 
+#include "handmade.cpp"
+
 #define MAX_GAMEPADS 4
 
 
+typedef struct {
+	SDL_Texture *Texture;
+	void *Memory;
+	int Width;
+	int Height;
+	int Pitch;
+} sdl_offscreen_buffer;
 
 typedef struct {
 	int Size;
@@ -27,14 +37,6 @@ typedef struct {
 	void *Data;
 } sdl_audio_ring_buffer;
 
-// pixels are always 32-bit and have the bytes of BGRX order
-typedef struct {
-	SDL_Texture *Texture;
-	void *Memory;
-	int Width;
-	int Height;
-	int Pitch;
-} sdl_offscreen_buffer;
 
 typedef struct {
 	int Width;
@@ -62,30 +64,6 @@ sdl_window_dimension SDLGetWindowDimension(SDL_Window *Window){
 	SDL_GetWindowSize(Window, &Result.Width, &Result.Height);
 
 	return Result;
-}
-
-internal void RenderWeirdGradient(sdl_offscreen_buffer Buffer, int BlueOffset, int GreenOffset){
-	uint8_t *Row = (uint8_t *)Buffer.Memory;
-
-	uint8_t Alpha = 255;
-
-	for(int Y = 0;
-			Y < Buffer.Height;
-			++Y)
-	{
-		uint32_t *Pixel = (uint32_t *)Row;
-		for(int X = 0;
-				X < Buffer.Width;
-				++X)
-		{
-			uint8_t Blue = (X + BlueOffset);
-			uint8_t Green = (Y + GreenOffset);
-			uint8_t Red = 255 -((((Blue + Green)*100)/((Green + 255)))*255)/100;
-			*Pixel++ =  ((Alpha << 24) | (Red << 16) | (Green << 8) | Blue);
-		}
-
-		Row += Buffer.Pitch;
-	}
 }
 
 
@@ -308,17 +286,21 @@ int main(int argc, char* argv[]){
 
 
 	uint64_t PreviousCounter = SDL_GetPerformanceCounter();
+	uint64_t PreviousCycleCount = __rdtsc();
+
+	timespec start, stop;
 	
 	while (RUNNING){
 
+		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			RUNNING = HandleEvent(&event, &SoundOutput);
 		}
 
-		//++XOffset; 
-		//YOffset += 2;
+	//	++XOffset; 
+	//	YOffset += 2;
 
 		if(SDL_HasGamepad()){
 
@@ -355,7 +337,14 @@ int main(int argc, char* argv[]){
 
 		}
 
-		RenderWeirdGradient(GlobalBackbuffer, XOffset, YOffset);
+		game_offscreen_buffer Buffer = {};
+		Buffer.Memory = GlobalBackbuffer.Memory;		
+		Buffer.Width = GlobalBackbuffer.Width;
+		Buffer.Height = GlobalBackbuffer.Height;
+		Buffer.Pitch = GlobalBackbuffer.Pitch; 
+		GameUpdateAndRender(&Buffer, XOffset, YOffset);
+
+		//AUDIO
 
 		int TargetQueueBytes = SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample;
 		int RequiredBytes = TargetQueueBytes - SDL_GetAudioStreamQueued(AudioStream);
@@ -364,17 +353,30 @@ int main(int argc, char* argv[]){
 
 		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
 
+		//PERFORMANCE COUNTER
 		uint64_t EndCounter = SDL_GetPerformanceCounter();
+		uint64_t EndCycleCount = __rdtsc();
 
 		uint64_t CounterElapsed = EndCounter - PreviousCounter;
+		uint64_t CyclesElapsed = EndCycleCount - PreviousCycleCount;
 
-		double MSPerFrame = (((1000.0f * (double)CounterElapsed) / (double)PerformanceCounterFrequency));
+		//GetPerformanceCounter = counts; PerformanceCounterFrequency = counts / second; counts/(counts/second);
+		//== (second*counts)/counts == second; Fequency = counts/second
+		double MillisecondsPerFrame = (((1000.0f * (double)CounterElapsed) / (double)PerformanceCounterFrequency));
 		double FPS = (double)PerformanceCounterFrequency / (double)CounterElapsed;
-		printf("%.02f ms/f, %.02ff\n", MSPerFrame, FPS);
+		double MegaCyclesPerFrame = ((double)CyclesElapsed / (1000.0f * 1000.0f)); 
 
-		//TODO display value;
+		printf("%.02f ms/f, %.02ff/s, %.02fmc/f, rdtsc:%.02ld\n", MillisecondsPerFrame, FPS, MegaCyclesPerFrame, EndCycleCount - PreviousCycleCount);
 
 		PreviousCounter = EndCounter;
+		PreviousCycleCount = EndCycleCount;
+
+		clock_gettime(CLOCK_MONOTONIC_RAW, &stop);
+
+		uint64_t elapsed_ns = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_nsec - start.tv_nsec);
+		double elapsed_ms = (double)elapsed_ns / 1000000.0;
+
+		printf("%.02fms\n", elapsed_ms);
 
 	}
 
