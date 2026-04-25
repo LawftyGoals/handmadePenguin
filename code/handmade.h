@@ -12,6 +12,13 @@
 
 // FOURE THINGS - timing, controller/keyboard input, bitmap buffer to use, sound buffer to use
 
+typedef struct {
+	int SamplesPerSecond;
+	int SampleCount;
+	int16_t *Samples;
+} game_sound_output_buffer;
+
+internal void GameOutputSound(game_sound_output_buffer *SoundBuffer);
 
 // pixels are always 32-bit and have the bytes of BGRX order
 typedef struct {
@@ -21,7 +28,7 @@ typedef struct {
 	int Pitch;
 } game_offscreen_buffer;
 
-internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, int XOffset, int YOffset);
+internal void GameUpdateAndRender(game_offscreen_buffer *Buffer, game_sound_output_buffer *SoundBuffer);
 
 #define SDL_HANDMADE_H
 #endif

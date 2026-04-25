@@ -117,9 +117,7 @@ bool HandleEvent(SDL_Event *Event, sdl_sound_output *SoundOutput){
 			{
 				//TODO: Handle this with a message to user?
 				printf("SDL_QUIT\n");
-				shouldContinue = false;
-			} break;
-		case SDL_EVENT_WINDOW_RESIZED:
+				shouldContinue = false; } break; case SDL_EVENT_WINDOW_RESIZED:
 			{
 				SDL_Window *Window = SDL_GetWindowFromID(Event->window.windowID);
 				SDL_Renderer *Renderer = SDL_GetRenderer(Window);
@@ -155,9 +153,8 @@ bool HandleEvent(SDL_Event *Event, sdl_sound_output *SoundOutput){
 							{
 								printf("W: ");
 								if(isDown){
-									//SoundOutput->ToneHz = 512 + (int)(256.0f * (1.0f/3000.0));
-									//SoundOutput->WavePeriod = SoundOutput->SamplesPerSecond/SoundOutput->ToneHz;
-									printf("SPS: %d\nTHz: %d\nTV: %d\nRSI: %d\nWP: %fd\nBPS: %d\nSBS: %d\ntS: %fLSC %d\n", SoundOutput->SamplesPerSecond, SoundOutput->ToneHz, SoundOutput->ToneVolume, SoundOutput->RunningSampleIndex, SoundOutput->WavePeriod, SoundOutput->BytesPerSample, SoundOutput->SecondaryBufferSize, SoundOutput->tSine, SoundOutput->LatencySampleCount);
+									SoundOutput->ToneHz = 512 + (int)(256.0f * (1.0f/3000.0));
+									SoundOutput->WavePeriod = SoundOutput->SamplesPerSecond/SoundOutput->ToneHz;
 								}
 								if(wasDown){
 									printf("was down\n");
@@ -173,7 +170,6 @@ bool HandleEvent(SDL_Event *Event, sdl_sound_output *SoundOutput){
 }
 
 SDL_Gamepad *GamepadHandles[MAX_GAMEPADS];
-
 internal void SDLOpenGamepads(){
 	int maxpads = MAX_GAMEPADS;
 	SDL_JoystickID *GamepadIds = SDL_GetGamepads(&maxpads);
@@ -212,33 +208,11 @@ internal SDL_AudioStream *SDLInitAudio(uint8_t channels, int32_t SamplesFrequenc
 
 	return stream;
 }
+internal void SDLFillSoundBuffer(SDL_AudioStream *AudioStream, game_sound_output_buffer *SoundBuffer, int BytesToWrite){
 
-internal void SDLFillSoundBuffer(SDL_AudioStream *AudioStream, sdl_sound_output *SoundOutput, int ByteToLock, int BytesToWrite){
-	int SampleCount = BytesToWrite/SoundOutput->BytesPerSample;
-	void *AudioBuffer = malloc(BytesToWrite);
-	int16_t *SampleOut = (int16_t*)AudioBuffer;
+	SDL_PutAudioStreamData(AudioStream, SoundBuffer->Samples, BytesToWrite);
 	
-	for(int SampleIndex = 0;
-			SampleIndex < SampleCount;
-			++SampleIndex) {
-		float SineValue = SDL_sin(SoundOutput->tSine);
-		int16_t SampleValue = (int16_t)(SineValue * SoundOutput->ToneVolume);
-		*SampleOut++ = SampleValue;
-		*SampleOut++ = SampleValue;
-		if((SoundOutput->tSine += 2.0f * SDL_PI_F / (float)SoundOutput->WavePeriod) > 2.0f * SDL_PI_F){
-			SoundOutput->tSine -= 3.0f * SDL_PI_F;
-			}
-
-		//SoundOutput->tSine += (2.0f*SDL_PI_F)/((float)SoundOutput->WavePeriod);
-		++SoundOutput->RunningSampleIndex;
-	}
-
-	SDL_PutAudioStreamData(AudioStream, AudioBuffer, BytesToWrite);
-	
-	free(AudioBuffer);
 }
-
-
 
 int main(int argc, char* argv[]){
 
@@ -265,14 +239,15 @@ int main(int argc, char* argv[]){
 	SoundOutput.ToneVolume = 3000;
 	SoundOutput.WavePeriod = (float)SoundOutput.SamplesPerSecond / (float)SoundOutput.ToneHz;
 	SoundOutput.BytesPerSample = sizeof(int16_t) * 2;
-	SoundOutput.LatencySampleCount = SoundOutput.SamplesPerSecond / 15;
+	//30 frames per secondish sound
+	SoundOutput.LatencySampleCount = (SoundOutput.SamplesPerSecond / 30) * 2;
+	int16_t *Samples = (int16_t *)SDL_calloc(SoundOutput.LatencySampleCount, SoundOutput.BytesPerSample);
 
 	if((AudioStream = SDLInitAudio(2, SoundOutput.SamplesPerSecond)) == NULL){
 		SDL_LogError(SDL_LOG_CATEGORY_ERROR, "Could not initialize audio.\n");
 		return 1;
 	}
 
-	SDLFillSoundBuffer(AudioStream, &SoundOutput, 0, SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample);
 	SDL_ResumeAudioStreamDevice(AudioStream);
 	
 
@@ -336,19 +311,27 @@ int main(int argc, char* argv[]){
 			}
 
 		}
+		int TargetQueueBytes = SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample;
+		int RequiredBytes = TargetQueueBytes - SDL_GetAudioStreamQueued(AudioStream);
+		game_sound_output_buffer SoundBuffer = {};
+		SoundBuffer.SamplesPerSecond = SoundOutput.SamplesPerSecond;
+		SoundBuffer.SampleCount = RequiredBytes / SoundOutput.BytesPerSample;
+		SoundBuffer.Samples = Samples;
+		
+
 
 		game_offscreen_buffer Buffer = {};
 		Buffer.Memory = GlobalBackbuffer.Memory;		
 		Buffer.Width = GlobalBackbuffer.Width;
 		Buffer.Height = GlobalBackbuffer.Height;
 		Buffer.Pitch = GlobalBackbuffer.Pitch; 
-		GameUpdateAndRender(&Buffer, XOffset, YOffset);
+
+
+		GameUpdateAndRender(&Buffer, &SoundBuffer);
 
 		//AUDIO
 
-		int TargetQueueBytes = SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample;
-		int RequiredBytes = TargetQueueBytes - SDL_GetAudioStreamQueued(AudioStream);
-		if(RequiredBytes) SDLFillSoundBuffer(AudioStream, &SoundOutput, 0, RequiredBytes);
+		if(RequiredBytes) SDLFillSoundBuffer(AudioStream, &SoundBuffer, RequiredBytes);
 
 
 		SDLUpdateWindow(Window, Renderer, GlobalBackbuffer);
@@ -366,7 +349,6 @@ int main(int argc, char* argv[]){
 		double FPS = (double)PerformanceCounterFrequency / (double)CounterElapsed;
 		double MegaCyclesPerFrame = ((double)CyclesElapsed / (1000.0f * 1000.0f)); 
 
-		printf("%.02f ms/f, %.02ff/s, %.02fmc/f, rdtsc:%.02ld\n", MillisecondsPerFrame, FPS, MegaCyclesPerFrame, EndCycleCount - PreviousCycleCount);
 
 		PreviousCounter = EndCounter;
 		PreviousCycleCount = EndCycleCount;
@@ -376,8 +358,10 @@ int main(int argc, char* argv[]){
 		uint64_t elapsed_ns = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_nsec - start.tv_nsec);
 		double elapsed_ms = (double)elapsed_ns / 1000000.0;
 
-		printf("%.02fms\n", elapsed_ms);
-
+		if(false) {
+			printf("%.02f ms/f, %.02ff/s, %.02fmc/f, rdtsc:%.02ld\n", MillisecondsPerFrame, FPS, MegaCyclesPerFrame, EndCycleCount - PreviousCycleCount);
+			printf("%.02fms\n", elapsed_ms);
+		}
 	}
 
 	SDL_DestroyWindow(Window);
